@@ -16,7 +16,7 @@ def main():
                         help="Merged Qwen3-VL model or PEFT adapter directory")
     parser.add_argument("--sam-checkpoint", default=None)
     parser.add_argument("--ocsr-checkpoint", default=None)
-    parser.add_argument("--ocsr-repo", default="CYF200127/ChemEAGLEModel")
+    parser.add_argument("--ocsr-repo", default="")
     parser.add_argument("--ocsr-filename", default="molnextr.pth")
     parser.add_argument("--scale", type=int, default=3)
     parser.add_argument("--sam-device", default="cuda")
