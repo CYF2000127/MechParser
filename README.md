@@ -57,13 +57,6 @@ SDPA when it is unavailable:
 python -m pip install flash-attn --no-build-isolation
 ```
 
-The MolNexTR inference implementation is included directly in this repository;
-it is not installed through the legacy MolScribe package and therefore does not
-inherit that package's obsolete `torch<2.0` metadata constraint. The MolNexTR
-weights are not stored in Git. By default, the pipeline downloads
-`molnextr.pth` from `CYF200127/ChemEAGLEModel`. SAM3 similarly downloads its
-official weights unless a local checkpoint is supplied.
-
 ## Configuration
 
 Copy the path template and edit it for the local machine or cluster:
