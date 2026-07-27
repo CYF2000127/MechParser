@@ -1,7 +1,9 @@
 """
-End-to-end pipeline：原始图像 → 移除箭头 → 预测分子 → 生成SMARTS → 拼接高清图 → LLM预测箭头
-输入：原始带箭头的分子图像
-输出：3x 高清拼接图（左=原图放大，右=RDKit 矢量重绘 atom indices）+ final SMARTS + 箭头预测
+End-to-end pipeline: raw image -> arrow removal -> OCSR -> SMARTS -> high-res
+left-right panel -> VLM arrow prediction
+Input:  a cropped mechanism diagram with curved arrows.
+Output: a 3x high-res panel pair (left = upscaled original, right = RDKit
+        re-render with atom indices), the final SMARTS, and the arrow list.
 """
 
 import os, json, re, cv2, torch, numpy as np
@@ -21,7 +23,7 @@ SCALE = 3
 
 
 # ────────────────────────────────────────────────────────────
-# 1. 模型加载（全局单例）
+# 1. Model loading (process-wide singletons)
 # ────────────────────────────────────────────────────────────
 _sam3_model = None
 _sam3_processor = None
@@ -35,39 +37,44 @@ def _load_sam3(device="cuda", checkpoint_path=None):
     if _sam3_model is None:
         from sam3.model_builder import build_sam3_image_model
         from sam3.model.sam3_image_processor import Sam3Processor
-        print("[Pipeline] 加载 SAM3 模型...")
+        print("[Pipeline] Loading SAM3 model...")
         _sam3_model = build_sam3_image_model(
             device=device,
             checkpoint_path=checkpoint_path,
             load_from_HF=checkpoint_path is None,
         )
         _sam3_processor = Sam3Processor(_sam3_model, device=device)
-        print("[Pipeline] SAM3 模型加载完成")
+        print("[Pipeline] SAM3 model loaded")
     return _sam3_processor
 
 
 def _load_molnextr(device="cpu", checkpoint_path=None,
-                   repo_id="CYF200127/ChemEAGLEModel",
+                   repo_id="",
                    filename="molnextr.pth"):
     global _molnextr_model
     if _molnextr_model is None:
-        print("[Pipeline] 加载 MolNexTR 模型...")
+        if not checkpoint_path and not repo_id:
+            raise ValueError(
+                "No MolNexTR weights provided. Pass --ocsr-checkpoint for a local file, "
+                "or --ocsr-repo for a Hugging Face repository.")
+        print("[Pipeline] Loading MolNexTR model...")
         ckpt = checkpoint_path or hf_hub_download(repo_id, filename)
         _molnextr_model = MolNexTR(ckpt, device=torch.device(device))
-        print("[Pipeline] MolNexTR 模型加载完成")
+        print("[Pipeline] MolNexTR model loaded")
     return _molnextr_model
 
 
 def _load_llm(model_path: str, device="cuda"):
-    """加载 Qwen3-VL 箭头预测模型（全局单例）。
-    支持两种模式：
-      - merged 模型目录（直接加载）
-      - LoRA checkpoint 目录（含 adapter_config.json，自动加载 base + adapter）
+    """Load the Qwen3-VL arrow-prediction model (process-wide singleton).
+    Two modes are supported:
+      - a merged model directory, loaded directly
+      - a LoRA checkpoint directory containing adapter_config.json, in which
+        case the base model and the adapter are loaded together
     """
     global _llm_model, _llm_processor
     if _llm_model is None:
         from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
-        print(f"[Pipeline] 加载 LLM 箭头预测模型: {model_path}")
+        print(f"[Pipeline] Loading arrow-prediction model: {model_path}")
         adapter_config_path = os.path.join(model_path, "adapter_config.json")
         try:
             from flash_attn import flash_attn_func  # noqa: F401
@@ -81,7 +88,7 @@ def _load_llm(model_path: str, device="cuda"):
             with open(adapter_config_path) as f:
                 adapter_config = json.load(f)
             base_model_path = adapter_config["base_model_name_or_path"]
-            print(f"[Pipeline]   LoRA 模式, Base model: {base_model_path}")
+            print(f"[Pipeline]   LoRA mode, base model: {base_model_path}")
             model = Qwen3VLForConditionalGeneration.from_pretrained(
                 base_model_path,
                 torch_dtype=torch.bfloat16,
@@ -90,7 +97,7 @@ def _load_llm(model_path: str, device="cuda"):
             model = PeftModel.from_pretrained(model, model_path)
             _llm_processor = AutoProcessor.from_pretrained(base_model_path)
         else:
-            print(f"[Pipeline]   Merged 模式, 直接加载")
+            print(f"[Pipeline]   Merged mode, loading directly")
             model = Qwen3VLForConditionalGeneration.from_pretrained(
                 model_path,
                 torch_dtype=torch.bfloat16,
@@ -99,16 +106,16 @@ def _load_llm(model_path: str, device="cuda"):
             _llm_processor = AutoProcessor.from_pretrained(model_path)
         model.eval()
         _llm_model = model
-        print("[Pipeline] LLM 模型加载完成")
+        print("[Pipeline] Arrow-prediction model loaded")
     return _llm_model, _llm_processor
 
 
 # ────────────────────────────────────────────────────────────
-# 2. 箭头移除
+# 2. Arrow removal
 # ────────────────────────────────────────────────────────────
 def remove_arrows(image_rgb: np.ndarray, device="cuda",
                   checkpoint_path=None) -> np.ndarray:
-    """用 SAM3 检测并移除弯曲箭头，返回去箭头的 RGB 图。"""
+    """Detect and erase curved arrows with SAM3; return the cleaned RGB image."""
     processor = _load_sam3(device, checkpoint_path)
     pil_img = Image.fromarray(image_rgb)
     img_h, img_w = image_rgb.shape[:2]
@@ -135,7 +142,7 @@ def remove_arrows(image_rgb: np.ndarray, device="cuda",
 
 
 # ────────────────────────────────────────────────────────────
-# 3. LLM 箭头预测
+# 3. VLM arrow prediction
 # ────────────────────────────────────────────────────────────
 ARROW_PROMPT = (
     "Task: Analyze the provided chemical image.\n"
@@ -164,7 +171,7 @@ ARROW_PROMPT = (
 def predict_arrows(image_path: str, llm_model_path: str,
                    device: str = "cuda",
                    max_new_tokens: int = 512) -> str:
-    """用 Qwen3-VL 模型预测拼接图中的弯曲箭头。"""
+    """Predict the curved arrows in the concatenated panel with Qwen3-VL."""
     from qwen_vl_utils import process_vision_info
 
     model, processor = _load_llm(llm_model_path, device=device)
@@ -205,7 +212,7 @@ def predict_arrows(image_path: str, llm_model_path: str,
 
 
 # ────────────────────────────────────────────────────────────
-# 4. SMARTS 生成辅助
+# 4. SMARTS generation helpers
 # ────────────────────────────────────────────────────────────
 def _apply_patch(pred: Dict):
     for key in ('smiles', 'molfile'):
@@ -297,7 +304,7 @@ def _simplify_smarts(smarts: str, symbols: list) -> str:
 
 
 def _build_mol_from_predictions(pred_data: Dict):
-    """从 predictions 的 symbols/edges 直接构建分子（不依赖 molfile）。"""
+    """Build the molecule from the predicted symbols/edges, without a molfile."""
     symbols = pred_data.get('symbols', [])
     edges = pred_data.get('edges')
     if not symbols or edges is None:
@@ -344,7 +351,7 @@ def _build_mol_from_predictions(pred_data: Dict):
 
 
 def generate_smarts(predictions: Dict) -> str:
-    """从 MolScribe predictions 生成 final SMARTS。"""
+    """Produce the final atom-mapped SMARTS from the OCSR predictions."""
     _apply_patch(predictions)
     molfile = predictions.get('molfile', '')
     symbols = predictions.get('symbols', [])
@@ -369,10 +376,10 @@ def generate_smarts(predictions: Dict) -> str:
 
 
 def generate_step_smarts(input_smarts: str, arrows_str: str) -> Optional[Dict]:
-    """从 input SMARTS + 标准箭头描述 → step SMARTS dict。
+    """Input SMARTS + arrow description -> cumulative step-SMARTS dict.
 
-    返回:
-        {"A": "step_smarts_A", "B": "step_smarts_B", ...} 或 None
+    Returns:
+        {"A": "step_smarts_A", "B": "step_smarts_B", ...}, or None
     """
     if not input_smarts or not arrows_str:
         return None
@@ -382,12 +389,12 @@ def generate_step_smarts(input_smarts: str, arrows_str: str) -> Optional[Dict]:
             return None
         return {label: sma for label, sma in steps}
     except Exception as e:
-        print(f"      Step SMARTS 生成失败: {e}")
+        print(f"      Step SMARTS generation failed: {e}")
         return None
 
 
 # ────────────────────────────────────────────────────────────
-# 5. 高清右图绘制（RDKit 矢量重绘）
+# 5. High-res right panel (RDKit re-render)
 # ────────────────────────────────────────────────────────────
 def _cropwhite_bbox(img_bgr):
     h, w, _ = img_bgr.shape
@@ -405,7 +412,7 @@ def _cropwhite_bbox(img_bgr):
 
 def _draw_molecule_hd(pred_data: Dict, molfile: str,
                       orig_bgr: np.ndarray, scale: int) -> Optional[np.ndarray]:
-    """用 RDKit 矢量重绘右图（带 atom indices），返回 BGR 图或 None。"""
+    """Re-render the right panel with RDKit and atom indices; BGR image or None."""
     mol = Chem.MolFromMolBlock(molfile.replace(' R ', ' * '), removeHs=False)
 
     if mol is None:
@@ -514,10 +521,10 @@ def _draw_molecule_hd(pred_data: Dict, molfile: str,
 
 
 # ────────────────────────────────────────────────────────────
-# 6. 拼接
+# 6. Panel concatenation
 # ────────────────────────────────────────────────────────────
 def _concat_lr(left_bgr: np.ndarray, right_bgr: np.ndarray, scale: int) -> np.ndarray:
-    """左右拼接，对齐高度，返回 RGB numpy。"""
+    """Concatenate left and right panels at matched height; return an RGB array."""
     left_rgb = cv2.cvtColor(left_bgr, cv2.COLOR_BGR2RGB)
     right_rgb = cv2.cvtColor(right_bgr, cv2.COLOR_BGR2RGB)
 
@@ -537,7 +544,7 @@ def _concat_lr(left_bgr: np.ndarray, right_bgr: np.ndarray, scale: int) -> np.nd
 
 
 # ────────────────────────────────────────────────────────────
-# 7. End-to-end 主函数
+# 7. End-to-end entry point
 # ────────────────────────────────────────────────────────────
 def process_image(image_path: str, output_dir: str,
                   llm_model_path: Optional[str] = None,
@@ -547,49 +554,50 @@ def process_image(image_path: str, output_dir: str,
                   llm_device: str = "cuda",
                   sam_checkpoint: Optional[str] = None,
                   ocsr_checkpoint: Optional[str] = None,
-                  ocsr_repo: str = "CYF200127/ChemEAGLEModel",
+                  ocsr_repo: str = "",
                   ocsr_filename: str = "molnextr.pth") -> Optional[Dict]:
     """
-    End-to-end: 原图 → 去箭头 → 预测分子 → SMARTS → 高清拼接图 → LLM预测箭头 → Step SMARTS
+    End-to-end: raw image -> arrow removal -> OCSR -> SMARTS -> high-res panel
+    pair -> arrow prediction -> cumulative step SMARTS.
 
-    参数:
-        image_path:       原始带箭头图像路径
-        output_dir:       输出目录
-        llm_model_path:   LLM 模型路径（merged 模型或 LoRA checkpoint）
-                          为 None 时跳过箭头预测和 Step SMARTS 步骤
-        scale:            放大倍数（默认 3）
-        sam_device:       SAM3 设备
-        molscribe_device: MolScribe 设备
-        llm_device:       LLM 推理设备
+    Args:
+        image_path:       path to the cropped arrow-bearing diagram
+        output_dir:       output directory
+        llm_model_path:   merged model or LoRA checkpoint;
+                          None skips arrow prediction and step SMARTS
+        scale:            upscaling factor (default 3)
+        sam_device:       device for SAM3
+        ocsr_device:      device for OCSR
+        llm_device:       device for the VLM
 
-    返回:
-        dict 包含:
-          中间输出: image_path, smarts, arrow_prediction
-          最终输出: step_smarts (dict), step_smarts_str (格式化文本)
-        或 None
+    Returns:
+        A dict with:
+          intermediates: image_path, smarts, arrow_prediction
+          final:         step_smarts (dict), step_smarts_str (formatted text)
+        or None on failure.
     """
     n_steps = 7 if llm_model_path else 5
     os.makedirs(output_dir, exist_ok=True)
     base_name = Path(image_path).stem
 
-    # ① 读取原图
+    # 1) read the source image
     orig_bgr = cv2.imread(image_path)
     if orig_bgr is None:
         pil = Image.open(image_path).convert('RGB')
         orig_bgr = np.array(pil)[:, :, ::-1].copy()
     orig_rgb = cv2.cvtColor(orig_bgr, cv2.COLOR_BGR2RGB)
-    print(f"[1/{n_steps}] 读取原图: {image_path}  ({orig_bgr.shape[1]}x{orig_bgr.shape[0]})")
+    print(f"[1/{n_steps}] Reading source image: {image_path}  ({orig_bgr.shape[1]}x{orig_bgr.shape[0]})")
 
-    # ② 移除箭头
-    print(f"[2/{n_steps}] SAM3 检测并移除箭头...")
+    # 2) remove arrows
+    print(f"[2/{n_steps}] SAM3 arrow detection and removal...")
     clean_rgb = remove_arrows(
         orig_rgb,
         device=sam_device,
         checkpoint_path=sam_checkpoint,
     )
 
-    # ③ MolScribe 预测
-    print(f"[3/{n_steps}] MolScribe 预测分子结构...")
+    # 3) OCSR
+    print(f"[3/{n_steps}] OCSR molecular structure recognition...")
     model = _load_molnextr(
         molnextr_device,
         checkpoint_path=ocsr_checkpoint,
@@ -599,16 +607,16 @@ def process_image(image_path: str, output_dir: str,
     predictions = model.predict_image(clean_rgb, return_atoms_bonds=True)
     _apply_patch(predictions)
 
-    # ④ 生成 SMARTS
-    print(f"[4/{n_steps}] 生成 SMARTS...")
+    # 4) build SMARTS
+    print(f"[4/{n_steps}] Building SMARTS...")
     final_smarts = generate_smarts(predictions)
     predictions['final_smarts'] = final_smarts
     print(f"      SMILES:  {predictions.get('smiles', '')}")
     print(f"      Symbols: {predictions.get('symbols', [])}")
     print(f"      SMARTS:  {final_smarts}")
 
-    # ⑤ 高清拼接
-    print(f"[5/{n_steps}] 生成 {scale}x 高清拼接图...")
+    # 5) high-res concatenation
+    print(f"[5/{n_steps}] Building {scale}x high-res panel pair...")
     h, w = orig_bgr.shape[:2]
     left_hd = cv2.resize(orig_bgr, (w * scale, h * scale), interpolation=cv2.INTER_LANCZOS4)
 
@@ -617,7 +625,7 @@ def process_image(image_path: str, output_dir: str,
     try:
         right_hd = _draw_molecule_hd(predictions, molfile, orig_bgr, scale)
     except Exception as e:
-        print(f"      RDKit 绘制失败 ({e})，fallback Lanczos 放大 clean 图")
+        print(f"      RDKit rendering failed ({e}); falling back to Lanczos upscaling")
 
     if right_hd is None:
         clean_bgr = cv2.cvtColor(clean_rgb, cv2.COLOR_RGB2BGR)
@@ -628,19 +636,19 @@ def process_image(image_path: str, output_dir: str,
     out_img_path = os.path.join(output_dir, f"{base_name}_result.png")
     Image.fromarray(concat_rgb).save(out_img_path)
 
-    # ⑥ LLM 箭头预测
+    # 6) arrow prediction
     arrow_prediction = None
     step_smarts_dict = None
     step_smarts_str = None
     if llm_model_path:
-        print(f"[6/{n_steps}] LLM 预测弯曲箭头...")
+        print(f"[6/{n_steps}] Predicting curved arrows...")
         arrow_prediction = predict_arrows(out_img_path, llm_model_path,
                                           device=llm_device)
         predictions['arrow_prediction'] = arrow_prediction
-        print(f"      箭头预测: {arrow_prediction}")
+        print(f"      Arrows: {arrow_prediction}")
 
-        # ⑦ 生成 Step SMARTS
-        print(f"[7/{n_steps}] 生成 Step SMARTS...")
+        # 7) build step SMARTS
+        print(f"[7/{n_steps}] Building step SMARTS...")
         if final_smarts and arrow_prediction and not arrow_prediction.startswith("Error:"):
             step_smarts_dict = generate_step_smarts(final_smarts, arrow_prediction)
             if step_smarts_dict:
@@ -652,29 +660,29 @@ def process_image(image_path: str, output_dir: str,
                 for label in sorted(step_smarts_dict):
                     print(f"        {label}: {step_smarts_dict[label]}")
             else:
-                print("      Step SMARTS 生成失败（arrows_to_steps 返回空）")
+                print("      Step SMARTS generation failed (arrows_to_steps returned empty)")
         else:
-            reason = "SMARTS 为空" if not final_smarts else "箭头预测为空或报错"
-            print(f"      跳过 Step SMARTS（{reason}）")
+            reason = "empty SMARTS" if not final_smarts else "empty or failed arrow prediction"
+            print(f"      Skipping step SMARTS ({reason})")
 
-    # 保存完整数据 JSON
+    # Persist the full record as JSON
     out_json_path = os.path.join(output_dir, f"{base_name}_data.json")
     with open(out_json_path, 'w', encoding='utf-8') as f:
         json.dump(predictions, f, indent=2, ensure_ascii=False)
 
-    # 打印汇总
-    print(f"\n  === {base_name} 结果汇总 ===")
-    print(f"  [中间] 拼接图像:    {out_img_path}")
-    print(f"  [中间] 原始 SMARTS: {final_smarts}")
+    # Summary
+    print(f"\n  === {base_name} summary ===")
+    print(f"  [mid]   panel image:   {out_img_path}")
+    print(f"  [mid]   input SMARTS:  {final_smarts}")
     if arrow_prediction is not None:
-        print(f"  [中间] LLM 箭头:    {arrow_prediction}")
+        print(f"  [mid]   arrows:        {arrow_prediction}")
     if step_smarts_str:
-        print(f"  [最终] Step SMARTS:")
+        print(f"  [final] step SMARTS:")
         for line in step_smarts_str.split("\n"):
             print(f"           {line}")
     else:
-        print(f"  [最终] Step SMARTS: (无)")
-    print(f"  [数据] JSON:        {out_json_path}")
+        print(f"  [final] step SMARTS: (none)")
+    print(f"  [data]  JSON:         {out_json_path}")
 
     result = {
         "smarts": final_smarts,
@@ -688,7 +696,7 @@ def process_image(image_path: str, output_dir: str,
 
 
 # ────────────────────────────────────────────────────────────
-# 8. 批量处理
+# 8. Batch processing
 # ────────────────────────────────────────────────────────────
 def batch_process(input_dir: str, output_dir: str,
                   llm_model_path: Optional[str] = None,
@@ -698,13 +706,13 @@ def batch_process(input_dir: str, output_dir: str,
                   llm_device: str = "cuda",
                   sam_checkpoint: Optional[str] = None,
                   ocsr_checkpoint: Optional[str] = None,
-                  ocsr_repo: str = "CYF200127/ChemEAGLEModel",
+                  ocsr_repo: str = "",
                   ocsr_filename: str = "molnextr.pth"):
-    """批量处理文件夹中所有图像。"""
+    """Process every supported image in a folder."""
     exts = {'.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.webp'}
     files = [p for p in Path(input_dir).iterdir()
              if p.suffix.lower() in exts]
-    print(f"找到 {len(files)} 张图像\n")
+    print(f"Found {len(files)} images\n")
 
     results = []
     ok = fail = 0
@@ -742,22 +750,22 @@ def batch_process(input_dir: str, output_dir: str,
 
     n_with_steps = sum(1 for r in results if r.get("step_smarts"))
     print(f"\n{'='*60}")
-    print(f"完成！成功 {ok} / 失败 {fail}")
+    print(f"Done. Succeeded {ok} / failed {fail}")
     if llm_model_path:
-        print(f"生成 Step SMARTS: {n_with_steps}/{ok}")
-    print(f"汇总: {summary_path}")
+        print(f"Step SMARTS produced: {n_with_steps}/{ok}")
+    print(f"Summary: {summary_path}")
     return results
 
 
 # ────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="End-to-end: 原图 → 去箭头 → 预测 → SMARTS → 高清图 → LLM箭头预测")
-    parser.add_argument("input", help="单张图像路径 或 文件夹路径")
-    parser.add_argument("-o", "--output", default="pipeline_output", help="输出目录")
+    parser = argparse.ArgumentParser(description="End-to-end mechanism diagram parsing")
+    parser.add_argument("input", help="Path to one image or a folder")
+    parser.add_argument("-o", "--output", default="pipeline_output", help="Output directory")
     parser.add_argument("--llm-model", default=None,
-                        help="LLM 模型路径（merged 模型或 LoRA checkpoint），不传则跳过箭头预测")
-    parser.add_argument("--scale", type=int, default=SCALE, help="放大倍数")
+                        help="Merged model or LoRA checkpoint; omit to skip arrow prediction")
+    parser.add_argument("--scale", type=int, default=SCALE, help="Upscaling factor")
     parser.add_argument("--sam-device", default="cuda")
     parser.add_argument("--mol-device", default="cpu")
     parser.add_argument("--llm-device", default="cuda")
@@ -765,7 +773,7 @@ if __name__ == "__main__":
                         help="Optional local SAM3 checkpoint; otherwise download from Hugging Face")
     parser.add_argument("--ocsr-checkpoint", default=None,
                         help="Optional local MolNexTR checkpoint")
-    parser.add_argument("--ocsr-repo", default="CYF200127/ChemEAGLEModel",
+    parser.add_argument("--ocsr-repo", default="",
                         help="Hugging Face repository used when --ocsr-checkpoint is omitted")
     parser.add_argument("--ocsr-filename", default="molnextr.pth")
     args = parser.parse_args()

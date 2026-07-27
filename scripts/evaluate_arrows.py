@@ -334,7 +334,7 @@ def compute_metrics(predictions, references):
             if ref_end_atoms and pred_end_atoms == ref_end_atoms:
                 end_atoms_correct += 1
 
-            # Bond type + atoms match (键类型+原子序号都对)
+            # Bond type and atom indices both correct
             s_bt_ok = bond_type_and_atoms_match(pred_a['start'], ref_a['start'])
             e_bt_ok = bond_type_and_atoms_match(pred_a['end'], ref_a['end'])
             if s_bt_ok:

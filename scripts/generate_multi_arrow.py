@@ -16,7 +16,7 @@ from PIL import Image
 OUT_DIR = None
 BASE_SEED = 42
 
-# ============ 工具函数 ============
+# ============ Helpers ============
 KWARGS = dict(mol_augment=True, default_option=True, shuffle_nodes=False, pseudo_coords=False)
 
 BOND_NAME = {1: 'Single', 2: 'Double', 3: 'Triple', 4: 'Aromatic', 5: 'Single', 6: 'Single'}
@@ -146,8 +146,8 @@ def _build_rdkit_mol(graph):
 
 
 def draw_mol_rdkit(graph, width, height, add_atom_indices=True, bw=True):
-    """渲染分子并返回 (image, atom_pixel_coords)。
-    atom_pixel_coords: list of (px, py) 每个原子在图像上的精确像素位置。
+    """Render the molecule and return (image, atom_pixel_coords).
+    atom_pixel_coords: list of (px, py), the exact pixel position of each atom.
     """
     mol, n = _build_rdkit_mol(graph)
 
@@ -235,7 +235,7 @@ def _generate_one_inner(smiles_str, cid):
                         return False
         return True
 
-    # 随机样式
+    # Random style
     rs = random.Random(seed + 2)
     line_w = rs.choice([1, 1, 2, 2])
     alen = rs.randint(8, 11)
@@ -309,7 +309,7 @@ def _generate_one_inner(smiles_str, cid):
                 for kk in [0.40, 0.30, 0.50, 0.25]:
                     ctrl = mid + sign * kk * dist_se * perp
 
-                    # --- 起点漂移 ---
+                    # --- jitter the start point ---
                     if st_typ == 'atom':
                         tan0 = 2.0 * (ctrl - p0)
                         tn0 = np.linalg.norm(tan0)
@@ -323,7 +323,7 @@ def _generate_one_inner(smiles_str, cid):
                         s_bp = 1 if np.dot(ctrl - p0, bp) > 0 else -1
                         p0_off = p0 + offset_px * s_bp * bp
 
-                    # --- 终点漂移 ---
+                    # --- jitter the end point ---
                     if en_typ == 'atom':
                         tan2 = 2.0 * (p2 - ctrl)
                         tn2 = np.linalg.norm(tan2)
@@ -370,7 +370,7 @@ def _generate_one_inner(smiles_str, cid):
 
     arrow_gt = "[" + "; ".join(arrow_gts) + "]"
 
-    # 拼接左右图
+    # Concatenate the left and right panels
     h = max(h1, h2)
     if h1 != h: img_left = cv2.resize(img_left, (int(w1 * h / h1), h))
     if h2 != h: img_right = cv2.resize(img_right, (int(w2 * h / h2), h))
@@ -382,7 +382,7 @@ def _generate_one_inner(smiles_str, cid):
     return fname, arrow_gt
 
 
-# ============ 批量生成（多进程） ============
+# ============ Batch generation (multiprocessing) ============
 def _worker(args):
     """Worker function for multiprocessing."""
     row, label, idx = args

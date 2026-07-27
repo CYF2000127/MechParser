@@ -124,9 +124,9 @@ def compute_arrow_metrics(eval_pred: GenerativeEvalPrediction):
     end_atoms_correct = 0
     total_ref_arrows = 0
     total_pred_arrows = 0
-    arrows_fully_correct = 0  # 单箭头级别：Start AND End 都对
-    all_arrows_correct = 0  # 一条样本内所有箭头全对
-    chain_correct = 0       # 箭头间连贯性：Arrow N 的 End == Arrow N+1 的 Start
+    arrows_fully_correct = 0  # per arrow: both Start and End correct
+    all_arrows_correct = 0    # every arrow in the sample correct
+    chain_correct = 0         # chaining: End of arrow N == Start of arrow N+1
     total_chains = 0
 
     # Separate tracking for Error (rejection) vs normal (arrow) samples

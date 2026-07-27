@@ -14,7 +14,7 @@ from PIL import Image
 
 OUT_DIR = None
 
-# ============ 工具函数 ============
+# ============ Helpers ============
 KWARGS = dict(mol_augment=True, default_option=True, shuffle_nodes=False, pseudo_coords=False)
 
 BOND_NAME = {1: 'Single', 2: 'Double', 3: 'Triple', 4: 'Aromatic', 5: 'Single', 6: 'Single'}
@@ -177,7 +177,10 @@ def draw_mol_rdkit(graph, width, height):
 
 
 def generate_one(smiles_str, cid):
-    """生成一张带箭头的左右对比图 + GT 字符串。返回 (image_filename, gt_str) 或 None。"""
+    """Render one left-right panel pair with arrows plus its GT string.
+
+    Returns (image_filename, gt_str), or None on failure.
+    """
     try:
       return _generate_one_inner(smiles_str, cid)
     except Exception as e:
@@ -240,7 +243,7 @@ def _generate_one_inner(smiles_str, cid):
                 if seg_intersect(pts[k], pts[k+1], pa, pb): return False
         return True
 
-    # 随机样式
+    # Random style
     rs = random.Random(seed + 2)
     line_w = rs.choice([1, 1, 2, 2])
     alen = rs.randint(8, 11)
@@ -307,7 +310,7 @@ def _generate_one_inner(smiles_str, cid):
     if arrow_gt is None:
         return None
 
-    # 拼接左右图
+    # Concatenate the left and right panels
     h = max(h1, h2)
     if h1 != h: img_left = cv2.resize(img_left, (int(w1 * h / h1), h))
     if h2 != h: img_right = cv2.resize(img_right, (int(w2 * h / h2), h))
@@ -319,7 +322,7 @@ def _generate_one_inner(smiles_str, cid):
     return fname, arrow_gt
 
 
-# ============ 批量生成 ============
+# ============ Batch generation ============
 def generate_split(split_name, rows, offset=0):
     results = []
     for i, row in enumerate(rows):

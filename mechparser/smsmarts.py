@@ -1,26 +1,28 @@
 """
-reverse_arrows.py
+Bidirectional SM-SMARTS parser.
 
-从 input SMARTS + 箭头描述 [Arrow 1: Start: ... -> End: ...; ...]
-反向生成各步的 annotated step SMARTS。
-是 extract_arrows.py 的逆过程。
+Forward: given an input SMARTS and an ordered arrow list
+[Arrow 1: Start: ... -> End: ...; ...], emit the cumulative annotated
+step SMARTS for every arrow.
+Reverse: given the cumulative steps and the base scaffold, recover the
+ordered arrow operations and the typed edits behind them.
 
-注释系统：
-  - a/y 前缀: [aX:n] = 箭头起点原子(source), [yX:n] = 箭头终点原子(target)
-  - 键符号变化:
-      ! = 键断裂
-      _ = 变为单键 (原来不是单键)
-      ; = 变为双键 (原来不是双键)
-      ^ = 变为三键 (原来不是三键)
-  - δ 标记: 新键形成 (原图中不相邻的两个原子之间形成新键)
+Annotation symbols:
+  - atom prefixes: [aX:n] = electron source atom, [yX:n] = electron sink atom
+  - bond edits:
+      ! = bond cleaved
+      _ = becomes a single bond (was not single before)
+      ; = becomes a double bond (was not double before)
+      ^ = becomes a triple bond (was not triple before)
+  - delta marker: a new bond forms between two atoms that were not adjacent
 
-用法:
-  # 单条测试
-  python reverse_arrows.py --smarts "[O-:17]-[C:4](=[C:5]-[C:6]=[O:14])" \
+Usage:
+  # single case
+  python -m mechparser.smsmarts --smarts "[O-:17]-[C:4](=[C:5]-[C:6]=[O:14])" \
     --arrows "[Arrow 1: Start: atom [O-:17] -> End: atom [C:4]; ...]"
 
-  # 批量处理 JSON (需要 input_smarts 字段)
-  python reverse_arrows.py --json data.json --output data_with_steps.json
+  # batch over a JSON file (requires an input_smarts field)
+  python -m mechparser.smsmarts --json data.json --output data_with_steps.json
 """
 
 import re
@@ -32,7 +34,7 @@ import argparse
 class SMSMARTSParseError(ValueError):
     """Raised when a cumulative SM-SMARTS step cannot be decoded safely."""
 
-# ===== 常量 =====
+# ===== Constants =====
 
 BOND_TYPE_MAP = {'Single': '-', 'Double': '=', 'Triple': '#', 'Aromatic': ':'}
 
@@ -43,12 +45,12 @@ BOND_ORDER = {
     ':': 1.5, '!': 0
 }
 
-# 注释版键符号 (区别于标准键符号, 表示"变为该键序")
+# Annotated bond symbols, distinct from native SMARTS bonds: "becomes this order"
 ANNOT_SYM = {1: '_', 2: ';', 3: '^'}
 
 
 def _weaken(cur_order):
-    """键失去电子后的新键序 (source)"""
+    """New bond order after the bond donates electrons (source side)."""
     if cur_order >= 3:
         return 2
     if cur_order >= 2:
@@ -61,7 +63,7 @@ def _weaken(cur_order):
 
 
 def _strengthen(cur_order):
-    """键获得电子后的新键序 (target)"""
+    """New bond order after the bond receives electrons (target side)."""
     if cur_order <= 0:
         return 1
     if cur_order <= 1:
@@ -74,13 +76,13 @@ def _strengthen(cur_order):
 
 
 # ====================================================================
-# Part 1 - 箭头描述解析器
+# Part 1 - Arrow-description parser
 # ====================================================================
 
 def parse_arrows(text):
-    """解析箭头字符串 → [(start_entity, end_entity), ...]
+    """Parse an arrow string into [(start_entity, end_entity), ...].
 
-    每个 entity 是 tuple:
+    Each entity is a tuple:
       atom: ('atom', element_str, mapping_id_or_None)
       bond: ('bond', bond_symbol, atom1_id, atom2_id)
     """
@@ -99,7 +101,7 @@ def parse_arrows(text):
 
 
 def _parse_entity(t):
-    # atom [Element:ID]  或  atom [Element:unknown]
+    # atom [Element:ID] or atom [Element:unknown]
     m = re.match(r'atom\s+\[([^\]]*?):(\w+)\]', t)
     if m:
         mid = int(m.group(2)) if m.group(2) != 'unknown' else None
@@ -116,12 +118,13 @@ def _parse_entity(t):
 
 
 # ====================================================================
-# Part 2 - SMARTS 分词器 & 结构映射
+# Part 2 - SMARTS tokenizer and structure mapping
 # ====================================================================
 
 def tokenize(smarts):
-    """将 SMARTS 字符串拆分为 token 列表。
-    方括号原子整体作为一个 token，其余每个字符独立。"""
+    """Split a SMARTS string into a token list.
+    A bracketed atom is one token; every other character is its own token.
+    """
     toks = []
     i, n = 0, len(smarts)
     while i < n:
@@ -136,7 +139,7 @@ def tokenize(smarts):
 
 
 def build_graph(tokens):
-    """从 token 列表构建:
+    """Build from the token list:
       atom_pos: {mapping_id: token_index}
       bond_pos: {(min_id, max_id): {'i': token_idx, 's': symbol, 'imp': bool}}
     """
@@ -194,26 +197,26 @@ def build_graph(tokens):
 
 
 # ====================================================================
-# Part 3 - 核心: 箭头 → step SMARTS 生成
+# Part 3 - Core: arrows -> cumulative step SMARTS
 # ====================================================================
 
 def arrows_to_steps(input_smarts, arrows_str):
-    """核心函数: input SMARTS + 箭头描述 → [(label, step_smarts), ...]
+    """Core routine: input SMARTS + arrow description -> [(label, step_smarts), ...].
 
-    每步的 step SMARTS 是 input SMARTS 加上累计注释:
-      - 原子 a/y 前缀
-      - 键符号变化 (!, _, ;, ^)
-      - δ 标记 (新键形成)
+    Each step is the input SMARTS plus the accumulated annotations:
+      - atom a/y prefixes
+      - bond symbol changes (!, _, ;, ^)
+      - delta markers (new bond formation)
     """
     tokens = tokenize(input_smarts)
     atom_pos, bond_pos = build_graph(tokens)
     arrows = parse_arrows(arrows_str)
 
-    # 累计状态
+    # Accumulated state
     prefixes = {}       # mapping_id → 'a' / 'y'
-    bond_mods = {}      # (min_id, max_id) → 注释键符号
-    bond_state = {}     # (min_id, max_id) → 当前键序 (累计追踪)
-    deltas = set()      # 有 δ 标记的原子集合
+    bond_mods = {}      # (min_id, max_id) -> annotated bond symbol
+    bond_state = {}     # (min_id, max_id) -> current bond order
+    deltas = set()      # atoms carrying a delta marker
 
     for k, info in bond_pos.items():
         bond_state[k] = BOND_ORDER.get(info['s'], 1)
@@ -225,9 +228,9 @@ def arrows_to_steps(input_smarts, arrows_str):
     for idx, (start, end) in enumerate(arrows):
         st, et = start[0], end[0]
 
-        # ---- 新键形成检测 (覆盖 atom→atom, bond→atom, atom→bond) ----
+        # ---- new-bond detection (covers atom->atom, bond->atom, atom->bond) ----
         new_bond = False
-        new_bond_donor = None  # bond 侧参与新键的原子
+        new_bond_donor = None  # atom on the bond side that joins the new bond
 
         if st == 'atom' and et == 'atom':
             if start[2] is not None and end[2] is not None:
@@ -258,7 +261,7 @@ def arrows_to_steps(input_smarts, arrows_str):
                 new_bond_donor = ba1 if (ba2_touched and not ba1_touched) else (
                                  ba2 if (ba1_touched and not ba2_touched) else ba1)
 
-        # ----- 处理 Start -----
+        # ----- handle Start -----
         if st == 'atom' and start[2] is not None:
             prefixes[start[2]] = 'a'
             if new_bond:
@@ -273,7 +276,7 @@ def arrows_to_steps(input_smarts, arrows_str):
             if new_bond and new_bond_donor is not None:
                 deltas.add(new_bond_donor)
 
-        # ----- 处理 End -----
+        # ----- handle End -----
         if et == 'atom' and end[2] is not None:
             if new_bond:
                 deltas.add(end[2])
@@ -289,7 +292,7 @@ def arrows_to_steps(input_smarts, arrows_str):
             if new_bond and new_bond_donor is not None:
                 deltas.add(new_bond_donor)
 
-        # 生成本步的 step SMARTS
+        # Emit the step SMARTS for this arrow
         step = _build_step(tokens, atom_pos, bond_pos,
                            prefixes, bond_mods, deltas)
         steps.append((chr(65 + idx), step))
@@ -298,10 +301,10 @@ def arrows_to_steps(input_smarts, arrows_str):
 
 
 def _build_step(tokens, atom_pos, bond_pos, prefixes, bond_mods, deltas):
-    """根据当前累计的注释状态，生成一步 annotated SMARTS。"""
+    """Render one annotated SMARTS step from the accumulated state."""
     new_toks = list(tokens)
 
-    # 1) 键符号替换 / 插入
+    # 1) replace or insert bond symbols
     inserts = {}
     for k, sym in bond_mods.items():
         if k not in bond_pos:
@@ -312,14 +315,14 @@ def _build_step(tokens, atom_pos, bond_pos, prefixes, bond_mods, deltas):
         else:
             new_toks[info['i']] = sym
 
-    # 2) 原子前缀
+    # 2) atom prefixes
     for mp, pf in prefixes.items():
         if mp not in atom_pos:
             continue
         i = atom_pos[mp]
         new_toks[i] = '[' + pf + tokens[i][1:]
 
-    # 3) 拼接，并添加 δ 标记
+    # 3) join, adding delta markers
     parts = []
     for i, tok in enumerate(new_toks):
         if i in inserts:
@@ -334,7 +337,7 @@ def _build_step(tokens, atom_pos, bond_pos, prefixes, bond_mods, deltas):
 
 
 # ====================================================================
-# Part 4 - 累积 step SMARTS -> 有序箭头描述
+# Part 4 - Cumulative step SMARTS -> ordered arrow description
 # ====================================================================
 
 _ANNOTATED_BONDS = {'!', '_', ';', '^'}
@@ -532,11 +535,11 @@ def decode_steps(base_smarts, steps):
 
 
 # ====================================================================
-# Part 5 - 格式化输出
+# Part 5 - Output formatting
 # ====================================================================
 
 def format_answer(steps):
-    """将 steps 列表格式化为 <answer>...</answer> 格式。"""
+    """Format the step list as <answer>...</answer>."""
     parts = []
     for label, smarts in steps:
         parts.append(f'"{label}: {smarts}"')
@@ -545,7 +548,7 @@ def format_answer(steps):
 
 
 def format_simple(steps):
-    """简单的 label: smarts 格式，每步一行。"""
+    """Plain "label: smarts" format, one step per line."""
     lines = []
     for label, smarts in steps:
         lines.append(f'{label}: {smarts}')
@@ -553,7 +556,7 @@ def format_simple(steps):
 
 
 # ====================================================================
-# Part 6 - CLI & 批量处理
+# Part 6 - CLI and batch processing
 # ====================================================================
 
 def main():
