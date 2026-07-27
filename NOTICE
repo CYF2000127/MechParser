@@ -1,0 +1,15 @@
+MechParser
+
+The training implementation under src/ is derived from Qwen-VL-Finetune and is
+distributed under the Apache License 2.0 included in LICENSE.
+
+The `molnextr/` inference module accompanies the MolNexTR integration described
+in Chen et al., Journal of Cheminformatics 16, 141 (2024), DOI
+10.1186/s13321-024-00926-w. Confirm its redistribution terms with the original
+authors before making a public release; no separate source-code license was
+present in the working copy from which it was consolidated.
+
+This project integrates external components without redistributing their model
+weights: Qwen3-VL, PEFT, DeepSpeed, SAM3, MolNexTR, RDKit, and Indigo.
+Each component remains subject to its own license and model-use terms. Consult
+the upstream projects before redistribution or commercial use.

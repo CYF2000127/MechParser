@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv*/
+.env
+slurm_log/
+outputs/
+data/
+models/
+checkpoints/
+*.safetensors
+*.pt
+*.pth
+*.bin
+wandb/
+runs/

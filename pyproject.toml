@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mechparser"
+version = "0.1.0"
+description = "Training and inference code for parsing electron-pushing arrows from mechanism diagrams"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = {file = "LICENSE"}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mechparser*", "molnextr*", "src*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
