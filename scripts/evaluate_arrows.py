@@ -64,8 +64,8 @@ def _parse_arrows(text):
 
 
 def _extract_atom_ids(entity_str):
-    """Extract all atom IDs like [C:21] from an entity string."""
-    return set(re.findall(r'\[\w+:\d+\]', entity_str))
+    """Extract all atom tokens like [C:21] or [O-:5] from an entity string."""
+    return set(re.findall(r'\[[^\]:]*:\w+\]', entity_str))
 
 
 def _extract_bond_type(entity_str):
@@ -121,8 +121,13 @@ SHAPES = ("total_order", "cycle", "branching_or_disconnected")
 
 
 def _atom_ids(entity_str):
-    """Atom-map indices referenced by an entity string."""
-    return {int(m) for m in re.findall(r'\[\w+:(\d+)\]', entity_str)}
+    """Atom-map indices referenced by an entity string.
+
+    The element field may carry a charge or be a multi-character abbreviation
+    (e.g. [O-:5], [N+:3], [AcO-:0]), so it is matched as "anything up to the
+    colon" rather than with \\w.
+    """
+    return {int(m) for m in re.findall(r'\[[^\]:]*:(\d+)\]', entity_str)}
 
 
 def _chain_edges(arrows):

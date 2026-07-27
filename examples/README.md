@@ -38,7 +38,7 @@ files to `compute_metrics()` in `scripts/evaluate_arrows.py`.
 | Seq-EM | 15/20 = 75.0% |
 | Reference arrows | 50 |
 
-Partial-order shapes present: 18 total-order, 2 cyclic, 0 branching.
+Partial-order shapes present: 17 total-order, 3 cyclic, 0 branching.
 
 ## Why two exact-match numbers
 

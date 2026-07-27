@@ -135,18 +135,20 @@ counts may be below requested counts.
 
 ## Four-Stage Training
 
-The consolidated defaults reproduce the historical training commands:
+The defaults reproduce the training configuration reported in the paper:
 
 | Stage | Data | Method | Key defaults |
 |---|---|---|---|
-| 1 | Single-arrow synthetic | LoRA SFT | 2 epochs, global batch 120, LR 5e-5 |
-| 2 | Multi-arrow synthetic | Vision + language LoRA SFT | 2 epochs, global batch 64, LR 2e-5 |
-| 3a | 3K synthetic + real warmup | Mixed LoRA SFT | 8 epochs, global batch 16, LR 5e-6 |
-| 3b | Disjoint real subset | GRPO | 8 epochs, 6 generations, LR 1e-6 |
+| 1 | 200K single-arrow synthetic | LoRA SFT, vision tower frozen | 2 epochs, LR 1e-4, 3% warmup |
+| 2 | 100K multi-arrow synthetic | Vision + language LoRA SFT | 2 epochs, LR 5e-5 (vision-side LoRA 2x lower), 3% warmup |
+| 3a | 3K synthetic + 620 real | Mixed LoRA SFT | 3 epochs, LR 2e-5, 5% warmup |
+| 3b | 420 disjoint real diagrams | GRPO | 8 epochs, 6 generations, LR 1e-6, KL beta 0.04, temperature 1.1 |
 
-The historical Stage 1 log printed a nominal batch of 128, but six GPUs x batch
-4 x gradient accumulation 5 yields an actual global batch of 120. This repository
-uses 120 explicitly.
+Every stage uses LoRA rank 32 / alpha 64 / dropout 0.05, AdamW with a cosine
+schedule, DeepSpeed ZeRO-2, and a per-device micro-batch of 8 across 6 GPUs for
+an effective global batch of 48. Gradient accumulation is derived from
+`GLOBAL_BATCH / PER_DEVICE / num_gpus`, so the effective batch stays at 48 if the
+GPU count changes.
 
 Run one stage interactively or inside an allocation:
 
@@ -175,8 +177,7 @@ The driver submits:
 Stage 1 -> merge -> Stage 2 -> merge -> Stage 3a -> merge -> Stage 3b -> final merge
 ```
 
-GPU resources are passed explicitly by `submit_four_stage.sh`; Stage 3a no longer
-contains the malformed combined `--mem/--gres` directive from the legacy script.
+GPU resources are passed explicitly by `submit_four_stage.sh`.
 Training-time evaluation is disabled by default so final test data cannot affect
 checkpoint selection. Set `MECHPARSER_ENABLE_TRAIN_EVAL=1` only with a separate
 validation split.
