@@ -57,6 +57,14 @@ SDPA when it is unavailable:
 python -m pip install flash-attn --no-build-isolation
 ```
 
+The MolNexTR inference implementation is included directly in this repository,
+so it is not installed through the legacy MolScribe package and does not inherit
+that package's obsolete `torch<2.0` metadata constraint. Model weights are not
+stored in Git and there is no default download source: supply the MolNexTR
+checkpoint with `--ocsr-checkpoint`, or name a Hugging Face repository with
+`--ocsr-repo`. SAM3 downloads its official weights unless `--sam-checkpoint`
+points at a local file.
+
 ## Configuration
 
 Copy the path template and edit it for the local machine or cluster:
