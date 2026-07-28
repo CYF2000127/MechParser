@@ -1,49 +1,201 @@
-{
-  "description": "Expected output of scripts/evaluate_arrows.py on the 20-diagram example subset. Arrow-level matching is order-free; EA-EM accepts any linear extension of the reference partial order, with cyclic components matched modulo rotation.",
-  "n_samples": 20,
-  "n_reference_arrows": 50,
-  "n_predicted_arrows": 50,
-  "metrics": {
-    "arrow_precision": 0.900,
-    "arrow_recall": 0.900,
-    "arrow_f1": 0.900,
-    "arrow_f1_positional": 0.860,
-    "ea_exact_match": 0.800,
-    "exact_match_normalized": 0.750,
-    "arrow_count_acc": 1.000
-  },
-  "counts": {
-    "arrows_matched_order_free": 45,
-    "arrows_matched_positional": 43,
-    "ea_exact_match": 16,
-    "seq_exact_match": 15
-  },
-  "shape_breakdown": {
-    "total_order": {"n": 17, "ea_em": 13, "seq_em": 13},
-    "cycle": {"n": 3, "ea_em": 3, "seq_em": 2},
-    "branching_or_disconnected": {"n": 0, "ea_em": 0, "seq_em": 0}
-  },
-  "per_sample": [
-    {"id": 1,  "shape": "total_order", "arrows": 3, "matched": 3, "ea_em": true,  "seq_em": true},
-    {"id": 2,  "shape": "total_order", "arrows": 2, "matched": 2, "ea_em": true,  "seq_em": true},
-    {"id": 3,  "shape": "total_order", "arrows": 3, "matched": 3, "ea_em": true,  "seq_em": true},
-    {"id": 4,  "shape": "total_order", "arrows": 3, "matched": 3, "ea_em": true,  "seq_em": true},
-    {"id": 5,  "shape": "cycle",       "arrows": 2, "matched": 2, "ea_em": true,  "seq_em": false,
-     "note": "prediction is a cyclic rotation of the reference; accepted by EA-EM, rejected by Seq-EM"},
-    {"id": 6,  "shape": "cycle",       "arrows": 3, "matched": 3, "ea_em": true,  "seq_em": true},
-    {"id": 7,  "shape": "total_order", "arrows": 3, "matched": 2, "ea_em": false, "seq_em": false},
-    {"id": 8,  "shape": "total_order", "arrows": 2, "matched": 1, "ea_em": false, "seq_em": false},
-    {"id": 9,  "shape": "total_order", "arrows": 2, "matched": 2, "ea_em": true,  "seq_em": true},
-    {"id": 10, "shape": "total_order", "arrows": 2, "matched": 2, "ea_em": true, "seq_em": true},
-    {"id": 11, "shape": "total_order", "arrows": 2, "matched": 2, "ea_em": true,  "seq_em": true},
-    {"id": 12, "shape": "total_order", "arrows": 2, "matched": 2, "ea_em": true,  "seq_em": true},
-    {"id": 13, "shape": "total_order", "arrows": 3, "matched": 3, "ea_em": true,  "seq_em": true},
-    {"id": 14, "shape": "total_order", "arrows": 3, "matched": 3, "ea_em": true,  "seq_em": true},
-    {"id": 15, "shape": "cycle", "arrows": 2, "matched": 2, "ea_em": true,  "seq_em": true},
-    {"id": 16, "shape": "total_order", "arrows": 2, "matched": 2, "ea_em": true,  "seq_em": true},
-    {"id": 17, "shape": "total_order", "arrows": 2, "matched": 2, "ea_em": true,  "seq_em": true},
-    {"id": 18, "shape": "total_order", "arrows": 2, "matched": 2, "ea_em": true,  "seq_em": true},
-    {"id": 19, "shape": "total_order", "arrows": 4, "matched": 2, "ea_em": false, "seq_em": false},
-    {"id": 20, "shape": "total_order", "arrows": 3, "matched": 2, "ea_em": false, "seq_em": false}
-  ]
+﻿{
+    "description":  "Expected output of scripts/evaluate_arrows.py on the 20-diagram example subset. Arrow-level matching is order-free; EA-EM accepts any linear extension of the reference partial order, with cyclic components matched modulo rotation.",
+    "n_samples":  20,
+    "n_reference_arrows":  50,
+    "n_predicted_arrows":  50,
+    "metrics":  {
+                    "arrow_precision":  0.900,
+                    "arrow_recall":  0.900,
+                    "arrow_f1":  0.900,
+                    "arrow_f1_positional":  0.860,
+                    "ea_exact_match":  0.800,
+                    "exact_match_normalized":  0.750,
+                    "arrow_count_acc":  1.000
+                },
+    "counts":  {
+                   "arrows_matched_order_free":  45,
+                   "arrows_matched_positional":  43,
+                   "ea_exact_match":  16,
+                   "seq_exact_match":  15
+               },
+    "shape_breakdown":  {
+                            "total_order":  {
+                                                "n":  17,
+                                                "ea_em":  13,
+                                                "seq_em":  13
+                                            },
+                            "cycle":  {
+                                          "n":  3,
+                                          "ea_em":  3,
+                                          "seq_em":  2
+                                      },
+                            "branching_or_disconnected":  {
+                                                              "n":  0,
+                                                              "ea_em":  0,
+                                                              "seq_em":  0
+                                                          }
+                        },
+    "per_sample":  [
+                       {
+                           "id":  76,
+                           "shape":  "total_order",
+                           "arrows":  2,
+                           "matched":  2,
+                           "ea_em":  true,
+                           "seq_em":  true
+                       },
+                       {
+                           "id":  99,
+                           "shape":  "cycle",
+                           "arrows":  2,
+                           "matched":  2,
+                           "ea_em":  true,
+                           "seq_em":  false,
+                           "note":  "prediction is a cyclic rotation of the reference; accepted by EA-EM, rejected by Seq-EM"
+                       },
+                       {
+                           "id":  170,
+                           "shape":  "total_order",
+                           "arrows":  2,
+                           "matched":  2,
+                           "ea_em":  true,
+                           "seq_em":  true
+                       },
+                       {
+                           "id":  296,
+                           "shape":  "total_order",
+                           "arrows":  3,
+                           "matched":  3,
+                           "ea_em":  true,
+                           "seq_em":  true
+                       },
+                       {
+                           "id":  383,
+                           "shape":  "total_order",
+                           "arrows":  3,
+                           "matched":  3,
+                           "ea_em":  true,
+                           "seq_em":  true
+                       },
+                       {
+                           "id":  386,
+                           "shape":  "total_order",
+                           "arrows":  2,
+                           "matched":  2,
+                           "ea_em":  true,
+                           "seq_em":  true
+                       },
+                       {
+                           "id":  470,
+                           "shape":  "cycle",
+                           "arrows":  3,
+                           "matched":  3,
+                           "ea_em":  true,
+                           "seq_em":  true
+                       },
+                       {
+                           "id":  482,
+                           "shape":  "total_order",
+                           "arrows":  2,
+                           "matched":  2,
+                           "ea_em":  true,
+                           "seq_em":  true
+                       },
+                       {
+                           "id":  483,
+                           "shape":  "total_order",
+                           "arrows":  3,
+                           "matched":  3,
+                           "ea_em":  true,
+                           "seq_em":  true
+                       },
+                       {
+                           "id":  492,
+                           "shape":  "cycle",
+                           "arrows":  2,
+                           "matched":  2,
+                           "ea_em":  true,
+                           "seq_em":  true
+                       },
+                       {
+                           "id":  506,
+                           "shape":  "total_order",
+                           "arrows":  2,
+                           "matched":  1,
+                           "ea_em":  false,
+                           "seq_em":  false
+                       },
+                       {
+                           "id":  519,
+                           "shape":  "total_order",
+                           "arrows":  2,
+                           "matched":  2,
+                           "ea_em":  true,
+                           "seq_em":  true
+                       },
+                       {
+                           "id":  581,
+                           "shape":  "total_order",
+                           "arrows":  3,
+                           "matched":  2,
+                           "ea_em":  false,
+                           "seq_em":  false
+                       },
+                       {
+                           "id":  655,
+                           "shape":  "total_order",
+                           "arrows":  2,
+                           "matched":  2,
+                           "ea_em":  true,
+                           "seq_em":  true
+                       },
+                       {
+                           "id":  676,
+                           "shape":  "total_order",
+                           "arrows":  4,
+                           "matched":  2,
+                           "ea_em":  false,
+                           "seq_em":  false
+                       },
+                       {
+                           "id":  692,
+                           "shape":  "total_order",
+                           "arrows":  2,
+                           "matched":  2,
+                           "ea_em":  true,
+                           "seq_em":  true
+                       },
+                       {
+                           "id":  721,
+                           "shape":  "total_order",
+                           "arrows":  3,
+                           "matched":  3,
+                           "ea_em":  true,
+                           "seq_em":  true
+                       },
+                       {
+                           "id":  769,
+                           "shape":  "total_order",
+                           "arrows":  3,
+                           "matched":  3,
+                           "ea_em":  true,
+                           "seq_em":  true
+                       },
+                       {
+                           "id":  898,
+                           "shape":  "total_order",
+                           "arrows":  3,
+                           "matched":  2,
+                           "ea_em":  false,
+                           "seq_em":  false
+                       },
+                       {
+                           "id":  1125,
+                           "shape":  "total_order",
+                           "arrows":  2,
+                           "matched":  2,
+                           "ea_em":  true,
+                           "seq_em":  true
+                       }
+                   ]
 }
