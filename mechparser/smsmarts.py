@@ -15,6 +15,9 @@ Annotation symbols:
       ; = becomes a double bond (was not double before)
       ^ = becomes a triple bond (was not triple before)
   - delta marker: a new bond forms between two atoms that were not adjacent
+  - convention: in "Start: <bond>" the first atom listed is the through atom (keeps the
+    electrons, forms the new bond); a bond -> atom arrow declares a new bond when that
+    atom is not already bonded to the End atom (1,2-shifts), otherwise the End atom is a sink
 
 Usage:
   # single case
@@ -159,12 +162,14 @@ def build_graph(tokens):
             atom_pos[mp] = i
             if curr is not None:
                 k = (min(curr, mp), max(curr, mp))
-                if psym and psym not in '/\\':
-                    bond_pos[k] = {'i': pidx, 's': psym, 'imp': False}
-                elif psym in '/\\':
+                if psym is None:
+                    # Implicit single bond: an annotation is inserted in
+                    # front of this atom token when the bond is edited.
+                    bond_pos[k] = {'i': i, 's': '-', 'imp': True}
+                elif psym in ('/', '\\'):
                     bond_pos[k] = {'i': pidx, 's': '-', 'imp': False}
                 else:
-                    bond_pos[k] = {'i': i, 's': '-', 'imp': True}
+                    bond_pos[k] = {'i': pidx, 's': psym, 'imp': False}
             curr, psym, pidx = mp, None, None
 
         elif t == '(':
@@ -238,16 +243,16 @@ def arrows_to_steps(input_smarts, arrows_str):
                     new_bond = True
 
         elif st == 'bond' and et == 'atom' and end[2] is not None:
+            # Convention: the first atom of the Start bond is the through atom, the one that keeps
+            # the electrons and forms the new bond.  A new bond is declared when the through atom is
+            # not already bonded to the End atom.  This separates a 1,2-shift
+            # ("Bond [H:3]-[C:2] -> atom [C+:1]": new H3-C1 bond) from an elimination written with
+            # the adjacent carbon first ("Bond [C:2]-[H:3] -> atom [C+:1]": C2=C1 pi bond, no new bond).
             _, _, ba1, ba2 = start
             a3 = end[2]
-            if not _is_adjacent(ba1, a3) and not _is_adjacent(ba2, a3):
+            if a3 not in (ba1, ba2) and not _is_adjacent(ba1, a3):
                 new_bond = True
-                ba1_touched = (ba1 in prefixes
-                               or any(ba1 in bk for bk in bond_mods))
-                ba2_touched = (ba2 in prefixes
-                               or any(ba2 in bk for bk in bond_mods))
-                new_bond_donor = ba1 if (ba2_touched and not ba1_touched) else (
-                                 ba2 if (ba1_touched and not ba2_touched) else ba1)
+                new_bond_donor = ba1
 
         elif st == 'atom' and et == 'bond' and start[2] is not None:
             _, _, ba1, ba2 = end
@@ -341,6 +346,9 @@ def _build_step(tokens, atom_pos, bond_pos, prefixes, bond_mods, deltas):
 # ====================================================================
 
 _ANNOTATED_BONDS = {'!', '_', ';', '^'}
+# Order a bond has *after* an annotated edit, and the native symbol of that order.
+_ANNOT_ORDER = {'!': 0, '_': 1, ';': 2, '^': 3}
+_ANNOT_TO_NATIVE = {'!': None, '_': '-', ';': '=', '^': '#'}
 _BOND_LABELS = {
     '-': 'Single', '/': 'Single', '\\': 'Single',
     '=': 'Double', '#': 'Triple', ':': 'Aromatic',
@@ -400,14 +408,19 @@ def _format_atom(atoms, map_id):
     return f'atom [{atoms[map_id]}:{map_id}]'
 
 
-def _format_bond(atoms, key, bond_orders):
+def _format_bond(atoms, key, bond_orders, first=None):
     if key not in bond_orders:
         raise SMSMARTSParseError(f'Unknown bond: {key[0]}-{key[1]}')
     symbol = bond_orders[key]
+    if symbol is None:
+        raise SMSMARTSParseError(
+            f'Bond {key[0]}-{key[1]} was cleaved in an earlier step and cannot be named')
     bond_type = _BOND_LABELS.get(symbol)
     if bond_type is None:
-        raise SMSMARTSParseError(f'Unsupported source bond order {symbol!r} for {key}')
+        raise SMSMARTSParseError(f'Unsupported bond order {symbol!r} for {key}')
     left, right = key
+    if first is not None and first == right:
+        left, right = right, left
     return (f'{bond_type} Bond between atoms '
             f'[{atoms[left]}:{left}] and [{atoms[right]}:{right}]')
 
@@ -419,6 +432,34 @@ def _changed(current, previous):
     }
 
 
+def _classify_bond_changes(bond_changes, bond_orders, label):
+    """Split annotated bond edits into electron sources and electron targets.
+
+    An annotation symbol records the order a bond *becomes*, not the direction
+    of the change, so the same symbol is ambiguous on its own: ';' is either a
+    single bond that gained electrons or a triple bond that lost them. The base
+    scaffold supplies the order before the step, so the direction is decided by
+    comparing the two orders.
+    """
+    source_bonds, target_bonds = [], []
+    for key, symbol in bond_changes.items():
+        if key not in bond_orders:
+            raise SMSMARTSParseError(
+                f'{label}: annotated bond {key[0]}-{key[1]} is not in the base scaffold')
+        before = bond_orders[key]
+        before_order = 0 if before is None else BOND_ORDER.get(before, 1)
+        after_order = _ANNOT_ORDER[symbol]
+        if after_order < before_order:
+            source_bonds.append(key)
+        elif after_order > before_order:
+            target_bonds.append(key)
+        else:
+            raise SMSMARTSParseError(
+                f'{label}: bond {key[0]}-{key[1]} is annotated {symbol!r} '
+                f'but its order does not change')
+    return source_bonds, target_bonds
+
+
 def _decode_step(previous, current, atoms, bond_orders, label):
     prefix_changes = _changed(current['prefixes'], previous['prefixes'])
     bond_changes = _changed(current['bonds'], previous['bonds'])
@@ -426,8 +467,7 @@ def _decode_step(previous, current, atoms, bond_orders, label):
 
     source_atoms = [map_id for map_id, prefix in prefix_changes.items() if prefix == 'a']
     target_atoms = [map_id for map_id, prefix in prefix_changes.items() if prefix == 'y']
-    source_bonds = [key for key, symbol in bond_changes.items() if symbol in {'!', '_'}]
-    target_bonds = [key for key, symbol in bond_changes.items() if symbol in {';', '^'}]
+    source_bonds, target_bonds = _classify_bond_changes(bond_changes, bond_orders, label)
 
     if len(source_atoms) + len(source_bonds) != 1:
         raise SMSMARTSParseError(
@@ -445,7 +485,9 @@ def _decode_step(previous, current, atoms, bond_orders, label):
         source_text = _format_atom(atoms, source_value)
     else:
         source_kind, source_value = 'bond', source_bonds[0]
-        source_text = _format_bond(atoms, source_value, bond_orders)
+        # when a new bond formed, the delta-marked end of the source bond is the through atom: list it first
+        through = [a for a in source_value if a in new_deltas] if new_deltas else []
+        source_text = _format_bond(atoms, source_value, bond_orders, first=through[0] if through else None)
 
     if target_bonds:
         target_kind, target_value = 'bond', target_bonds[0]
@@ -481,7 +523,7 @@ def _decode_step(previous, current, atoms, bond_orders, label):
         raise SMSMARTSParseError(f'{label}: unsupported conservation signature {signature}')
 
     for key, symbol in bond_changes.items():
-        bond_orders[key] = {'!': None, '_': '-', ';': '=', '^': '#'}[symbol]
+        bond_orders[key] = _ANNOT_TO_NATIVE[symbol]
 
     return {
         'label': label,
